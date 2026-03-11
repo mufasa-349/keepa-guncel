@@ -4,13 +4,12 @@
 **Durum:** Yalnızca yeni (new) ürünler  
 **Ürün tipi:** Fiziksel ürünler  
 
-**Fiyat aralığı:** ~€60–€1500 (bazı filtrelerde alt sınır €100)  
+**Fiyat aralığı:** ~€100–€1500
 **Minimum new offer count:** ≥1  
 **Minimum rating:** 3 – 3.5  
 
 **Hariç tutulanlar:**
 - Amazon Renewed ürünler
-- Adult ürünler
 - Used / refurbished ürünler
 
 ### Kategoriler
