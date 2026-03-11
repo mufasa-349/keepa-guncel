@@ -17,8 +17,8 @@ except ImportError:
 
 # Varsayılan klasör ve dosya
 CSVS_DIR = Path(__file__).parent / "csvs"
-DEFAULT_INPUT = CSVS_DIR / "merged_translated.csv"
-DEFAULT_OUTPUT = CSVS_DIR / "merged_translated.xlsx"
+DEFAULT_INPUT = CSVS_DIR / "merged_translated_filtered.csv"
+DEFAULT_OUTPUT = CSVS_DIR / "merged_translated_filtered.xlsx"
 
 # Excel satır limiti (Excel max ~1.048.576 satır)
 EXCEL_MAX_ROWS = 1_048_576
