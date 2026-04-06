@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 """
-Translate Title and Categories: Tree from German to Turkish.
-Reads merged_columns.csv, adds Title (TR) and Categories: Tree (TR), saves every 50 rows.
-Rate limit: on 429/quota, waits RATE_LIMIT_WAIT s and retries (no crash).
-Output: merged_translated.csv
+Title ve Categories: Tree sütunlarını Almanca'dan Türkçe'ye çevirir.
+
+Varsayılan: csvs/merged_columns.csv → Title (TR), Categories: Tree (TR) + success sütunları.
+
+Özel CSV (örn. izgara-body-trimmer-smart-glass.csv):
+  python translate_to_turkish.py izgara-body-trimmer-smart-glass.csv [çıktı.csv]
+  → Ürün adı, Kategori Ağacı (+ success) eklenir; çıktı belirtilmezse *_translated.csv
+
+Tek satır testi (varsayılan girdi): python translate_to_turkish.py 113
+
+Rate limit: 429/quota'da RATE_LIMIT_WAIT saniye bekleyip tekrar dener.
 """
 
 import sys
@@ -19,8 +26,22 @@ except ImportError:
     raise
 
 CSVS_DIR = Path(__file__).parent / "csvs"
-INPUT_FILE = CSVS_DIR / "merged_columns.csv"
-OUTPUT_FILE = CSVS_DIR / "merged_translated.csv"
+DEFAULT_INPUT = CSVS_DIR / "merged_columns.csv"
+DEFAULT_OUTPUT = CSVS_DIR / "merged_translated.csv"
+# Özel dosya modunda kullanılan Türkçe sütun adları
+COLS_TURKISH_NAMES = {
+    "title_tr": "Ürün adı",
+    "cat_tr": "Kategori Ağacı",
+    "title_ok": "Ürün adı success",
+    "cat_ok": "Kategori Ağacı success",
+}
+# Varsayılan (merged) modunda
+COLS_DEFAULT = {
+    "title_tr": "Title (TR)",
+    "cat_tr": "Categories: Tree (TR)",
+    "title_ok": "Title (TR) success",
+    "cat_ok": "Categories: Tree (TR) success",
+}
 SAVE_EVERY = 50
 DELAY_SECONDS = 0.2  # lower = faster; increase if you hit rate limits
 TRANSLATE_TIMEOUT = 3
@@ -166,20 +187,34 @@ def translate_title_by_parts(translator, text):
     return joined, ok
 
 
-def main():
-    # Optional: test a single row, e.g. python translate_to_turkish.py 113
-    test_row = None
-    if len(sys.argv) > 1:
-        try:
-            test_row = int(sys.argv[1])  # 1-based row number (e.g. 113)
-        except ValueError:
-            pass
+def parse_main_args():
+    """
+    Dönüş: (input_path, output_path, cols dict, test_row veya None)
+    İlk arg sayı ise: varsayılan girdi, test satırı.
+    İlk arg dosya yolu ise: özel CSV, Türkçe sütun adları (Ürün adı, Kategori Ağacı).
+    """
+    args = sys.argv[1:]
+    if not args:
+        return DEFAULT_INPUT, DEFAULT_OUTPUT, COLS_DEFAULT, None
+    if args[0].isdigit():
+        return DEFAULT_INPUT, DEFAULT_OUTPUT, COLS_DEFAULT, int(args[0])
+    in_path = Path(args[0])
+    if not in_path.is_absolute():
+        in_path = Path(__file__).parent / in_path
+    out_path = Path(args[1]) if len(args) >= 2 else in_path.with_name(f"{in_path.stem}_translated.csv")
+    if not out_path.is_absolute():
+        out_path = Path(__file__).parent / out_path
+    return in_path, out_path, COLS_TURKISH_NAMES, None
 
-    if not INPUT_FILE.exists():
-        print("Input file not found:", INPUT_FILE)
+
+def main():
+    input_path, output_path, cols, test_row = parse_main_args()
+
+    if not input_path.exists():
+        print("Input file not found:", input_path)
         return
 
-    df = pd.read_csv(INPUT_FILE)
+    df = pd.read_csv(input_path, encoding="utf-8", quoting=1)
     n = len(df)
     if test_row is not None:
         if test_row < 1 or test_row > n:
@@ -188,14 +223,19 @@ def main():
         print(f"Test mode: only row {test_row}\n")
     translator = GoogleTranslator(source="de", target="tr")
 
-    if "Title (TR)" not in df.columns:
-        df["Title (TR)"] = ""
-    if "Categories: Tree (TR)" not in df.columns:
-        df["Categories: Tree (TR)"] = ""
-    if "Title (TR) success" not in df.columns:
-        df["Title (TR) success"] = False
-    if "Categories: Tree (TR) success" not in df.columns:
-        df["Categories: Tree (TR) success"] = False
+    ct = cols["title_tr"]
+    cc = cols["cat_tr"]
+    ct_ok = cols["title_ok"]
+    cc_ok = cols["cat_ok"]
+
+    if ct not in df.columns:
+        df[ct] = ""
+    if cc not in df.columns:
+        df[cc] = ""
+    if ct_ok not in df.columns:
+        df[ct_ok] = False
+    if cc_ok not in df.columns:
+        df[cc_ok] = False
 
     indices = [test_row - 1] if test_row is not None else range(n)
     for i in indices:
@@ -208,38 +248,33 @@ def main():
         title_masked = mask_brand(title_in, brand)
         cat_masked = mask_brand(cat_in, brand)
 
-        # Title and Categories in parallel (fast). Title uses comma-split only when long.
-        with ThreadPoolExecutor(max_workers=2) as ex:
-            title_fut = ex.submit(translate_title_by_parts, translator, title_masked)
-            cat_fut = ex.submit(translate_with_timeout, translator, cat_masked)
-            title_out, title_ok = title_fut.result()
-            cat_out, cat_ok = cat_fut.result()
+        # Sırayla: önce ürün adı, sonra kategori (paralel istekler yanıtları karıştırabiliyor)
+        title_out, title_ok = translate_title_by_parts(translator, title_masked)
+        title_out = unmask_brand(title_out, brand)
+        df.at[i, ct] = title_out
+        df.at[i, ct_ok] = title_ok
         time.sleep(DELAY_SECONDS)
 
-        # Restore brand name in output
-        title_out = unmask_brand(title_out, brand)
+        cat_out, cat_ok = translate_with_timeout(translator, cat_masked)
         cat_out = unmask_brand(cat_out, brand)
-
-        df.at[i, "Title (TR)"] = title_out
-        df.at[i, "Title (TR) success"] = title_ok
-        df.at[i, "Categories: Tree (TR)"] = cat_out
-        df.at[i, "Categories: Tree (TR) success"] = cat_ok
+        df.at[i, cc] = cat_out
+        df.at[i, cc_ok] = cat_ok
         time.sleep(DELAY_SECONDS)
 
         # Progress to terminal: input and output for every row
         print(f"--- Row {row_num}/{n} ---")
         print(f"  Title (DE): {str(title_in)[:80]}{'...' if len(str(title_in)) > 80 else ''}")
-        print(f"  Title (TR): {title_out[:80]}{'...' if len(title_out) > 80 else ''} [{'OK' if title_ok else 'FAIL'}]")
+        print(f"  {ct}: {title_out[:80]}{'...' if len(title_out) > 80 else ''} [{'OK' if title_ok else 'FAIL'}]")
         print(f"  Categories (DE): {str(cat_in)[:80]}{'...' if len(str(cat_in)) > 80 else ''}")
-        print(f"  Categories (TR): {cat_out[:80]}{'...' if len(cat_out) > 80 else ''} [{'OK' if cat_ok else 'FAIL'}]")
+        print(f"  {cc}: {cat_out[:80]}{'...' if len(cat_out) > 80 else ''} [{'OK' if cat_ok else 'FAIL'}]")
 
         if (row_num) % SAVE_EVERY == 0:
-            df.to_csv(OUTPUT_FILE, index=False)
+            df.to_csv(output_path, index=False, encoding="utf-8")
             print(f">>> Saved {row_num}/{n} products")
 
     if test_row is None:
-        df.to_csv(OUTPUT_FILE, index=False)
-        print("Done. Written to:", OUTPUT_FILE)
+        df.to_csv(output_path, index=False, encoding="utf-8")
+        print("Done. Written to:", output_path)
         print("Rows:", len(df))
     else:
         print("\n(Test run: output not saved to CSV)")
