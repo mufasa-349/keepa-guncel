@@ -15,10 +15,9 @@ except ImportError:
     print("Excel yazmak için openpyxl gerekli. Kurulum: pip install openpyxl")
     sys.exit(1)
 
-# Varsayılan klasör ve dosya
-CSVS_DIR = Path(__file__).parent / "csvs"
-DEFAULT_INPUT = CSVS_DIR / "merged_translated_filtered.csv"
-DEFAULT_OUTPUT = CSVS_DIR / "merged_translated_filtered.xlsx"
+# Varsayılan dosya (izgara)
+DEFAULT_INPUT = Path(__file__).parent / "guncel1_clean_len15.csv"
+DEFAULT_OUTPUT = Path(__file__).parent / "guncel1_clean_len15.xlsx"
 
 # Excel satır limiti (Excel max ~1.048.576 satır)
 EXCEL_MAX_ROWS = 1_048_576

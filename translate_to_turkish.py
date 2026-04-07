@@ -10,6 +10,9 @@ Varsayılan: csvs/merged_columns.csv → Title (TR), Categories: Tree (TR) + suc
 
 Tek satır testi (varsayılan girdi): python translate_to_turkish.py 113
 
+Kaldığı yerden devam (1. satır = 1): aynı CSV'ye yazmak için çevrilmiş dosyayı girdi yapın:
+  python translate_to_turkish.py izgara-body-trimmer-smart-glass_translated.csv --start 1451
+
 Rate limit: 429/quota'da RATE_LIMIT_WAIT saniye bekleyip tekrar dener.
 """
 
@@ -189,26 +192,47 @@ def translate_title_by_parts(translator, text):
 
 def parse_main_args():
     """
-    Dönüş: (input_path, output_path, cols dict, test_row veya None)
-    İlk arg sayı ise: varsayılan girdi, test satırı.
-    İlk arg dosya yolu ise: özel CSV, Türkçe sütun adları (Ürün adı, Kategori Ağacı).
+    Dönüş: (input_path, output_path, cols dict, test_row veya None, start_row 1-based)
+    --start N / --from N / -s N : N. satırdan itibaren çevir (öncekiler aynı kalır).
     """
-    args = sys.argv[1:]
+    raw = sys.argv[1:]
+    start_row = 1
+    i = 0
+    while i < len(raw):
+        if raw[i] in ("--start", "--from", "-s") and i + 1 < len(raw):
+            start_row = max(1, int(raw[i + 1]))
+            raw = raw[:i] + raw[i + 2 :]
+            continue
+        i += 1
+    args = raw
+
     if not args:
-        return DEFAULT_INPUT, DEFAULT_OUTPUT, COLS_DEFAULT, None
+        return DEFAULT_INPUT, DEFAULT_OUTPUT, COLS_DEFAULT, None, start_row
     if args[0].isdigit():
-        return DEFAULT_INPUT, DEFAULT_OUTPUT, COLS_DEFAULT, int(args[0])
+        return DEFAULT_INPUT, DEFAULT_OUTPUT, COLS_DEFAULT, int(args[0]), start_row
+
     in_path = Path(args[0])
     if not in_path.is_absolute():
         in_path = Path(__file__).parent / in_path
-    out_path = Path(args[1]) if len(args) >= 2 else in_path.with_name(f"{in_path.stem}_translated.csv")
+
+    has_second_path = len(args) >= 2 and not str(args[1]).startswith("-")
+    if has_second_path:
+        out_path = Path(args[1])
+        if not out_path.is_absolute():
+            out_path = Path(__file__).parent / out_path
+    elif start_row > 1:
+        # Devam: tek dosya verildiyse çıktı = girdi (üzerine yaz)
+        out_path = in_path
+    else:
+        out_path = in_path.with_name(f"{in_path.stem}_translated.csv")
     if not out_path.is_absolute():
         out_path = Path(__file__).parent / out_path
-    return in_path, out_path, COLS_TURKISH_NAMES, None
+
+    return in_path, out_path, COLS_TURKISH_NAMES, None, start_row
 
 
 def main():
-    input_path, output_path, cols, test_row = parse_main_args()
+    input_path, output_path, cols, test_row, start_row = parse_main_args()
 
     if not input_path.exists():
         print("Input file not found:", input_path)
@@ -221,6 +245,12 @@ def main():
             print(f"Row must be 1..{n}, got {test_row}")
             return
         print(f"Test mode: only row {test_row}\n")
+    elif start_row > n:
+        print(f"--start {start_row} dosyadaki satır sayısından ({n}) büyük.")
+        return
+    elif start_row > 1:
+        print(f"Kaldığı yerden devam: satır {start_row}–{n} ({n - start_row + 1} ürün). Çıktı: {output_path}\n")
+
     translator = GoogleTranslator(source="de", target="tr")
 
     ct = cols["title_tr"]
@@ -237,7 +267,10 @@ def main():
     if cc_ok not in df.columns:
         df[cc_ok] = False
 
-    indices = [test_row - 1] if test_row is not None else range(n)
+    if test_row is not None:
+        indices = [test_row - 1]
+    else:
+        indices = range(start_row - 1, n)
     for i in indices:
         row_num = i + 1
         title_in = df.at[i, "Title"]
